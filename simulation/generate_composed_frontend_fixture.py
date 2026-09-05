@@ -1,4 +1,5 @@
-"""Generate compact 4x Q4+Q3 -> Q2 coefficients for the STM32 benchmark."""
+"""Создаёт коэффициенты составного ядра для Эйлера или BDF2."""
+import argparse
 from pathlib import Path
 import numpy as np
 
@@ -10,7 +11,6 @@ from muff_multirate_model import Q1_NONLINEAR, SLOW_NODES, slow_step
 from q3_model import Q3Parameters
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "include" / "composed_frontend_fixture.h"
 SPARSE_THRESHOLD = 1.0e-7
 
 
@@ -66,16 +66,26 @@ def emit(prefix, data):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--bdf2", action="store_true")
+    args = parser.parse_args()
+    output = ROOT / "include" / (
+        "composed_frontend_fixture_bdf2.h" if args.bdf2
+        else "composed_frontend_fixture.h"
+    )
+    # Проводимость BDF2 равна 3C/(2h), то есть коэффициенты совпадают
+    # с коэффициентами Эйлера при условной частоте 3Fs/2.
+    coefficient_rate = 72_000 if args.bdf2 else 48_000
     p = Q3Parameters()
     nodes, dc_q = operating_point(1.0, 1.0, 0.8, p)
-    slow_reduction, slow = slow_affine(p, 1.0, 0.8, slow_rate=48_000)
+    slow_reduction, slow = slow_affine(p, 1.0, 0.8, slow_rate=coefficient_rate)
     slow_dc_state = slow_reduction.incidence.T @ np.concatenate(
         ([nodes[Q2_COLLECTOR]], nodes[SLOW_NODES]))
     _, _, _, _, port_i, port_g = slow_step(
         slow_reduction, slow_dc_state, dc_q[Q1_NONLINEAR],
         float(nodes[Q2_COLLECTOR]), True)
     port_offset = port_i - port_g * float(nodes[Q2_COLLECTOR])
-    first, second = prepare_blocks(p, 1.0, 1.0 / 48_000.0, port_g, dc_q)
+    first, second = prepare_blocks(p, 1.0, 1.0 / coefficient_rate, port_g, dc_q)
     dc_current, dc_first = nonlinear_terms(dc_q[:9], p, "hybrid", dc_q[:9])
 
     # Fold both reverse leakage currents into the first affine source.
@@ -113,7 +123,8 @@ def main():
         b[name + "_state"] = b["node_state"][[index]][:]
         b[name + "_active"] = b["node_active"][[index]][:]
 
-    parts = ["#ifndef COMPOSED_FRONTEND_FIXTURE_H\n#define COMPOSED_FRONTEND_FIXTURE_H\n",
+    guard = "COMPOSED_FRONTEND_FIXTURE_BDF2_H" if args.bdf2 else "COMPOSED_FRONTEND_FIXTURE_H"
+    parts = [f"#ifndef {guard}\n#define {guard}\n",
              "#define COMPOSED_STREAM_COUNT 256U\n", emit("composed_a_", a)]
     for name in ("q_boundary", "state_boundary", "drive_bias", "drive_input",
                  "drive_boundary", "drive_state", "drive_active"):
@@ -136,7 +147,8 @@ def main():
               c_array_1d("composed_port", np.array([port_offset, port_g])),
               "#endif\n"]
     text = "\n".join(parts)
-    OUTPUT.write_text(text, encoding="utf-8")
+    output.write_text(text, encoding="utf-8")
+    print(output)
 
 
 if __name__ == "__main__":
