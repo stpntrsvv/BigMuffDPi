@@ -32,7 +32,7 @@ Q1_REVERSE = 10
 Q1_UNUSED = 11
 NONLINEAR_COUNT = 12
 Architecture = Literal["reference_full", "hybrid", "hybrid_q1_linear"]
-IntegrationMethod = Literal["euler", "bdf2"]
+IntegrationMethod = Literal["euler", "bdf2", "trapezoid", "trapezoid_adaptive"]
 InputFunction = Callable[[np.ndarray], np.ndarray]
 
 
@@ -63,6 +63,7 @@ class CompleteResult:
     residual_v: np.ndarray
     correction_v: np.ndarray
     q1_nonlinear_mix: np.ndarray | None = None
+    integration_fallback_count: int = 0
 
 
 def _branch(matrix: np.ndarray, first: int, second: int, conductance: float) -> None:
@@ -375,13 +376,16 @@ def simulate_complete(
     fixed_corrections: int = 1,
     integration_method: IntegrationMethod = "euler",
 ) -> CompleteResult:
-    if integration_method not in ("euler", "bdf2"):
+    if integration_method not in ("euler", "bdf2", "trapezoid", "trapezoid_adaptive"):
         raise ValueError(f"Неизвестный способ интегрирования: {integration_method}")
     step_s = 1.0 / (48_000.0 * factor)
     euler_reduction = prepare_complete(sustain, tone, volume, step_s)
-    reduction = (
-        euler_reduction if integration_method == "euler"
-        else prepare_complete(sustain, tone, volume, step_s, integration_scale=1.5)
+    scale = {
+        "euler": 1.0, "bdf2": 1.5,
+        "trapezoid": 2.0, "trapezoid_adaptive": 2.0,
+    }[integration_method]
+    reduction = prepare_complete(
+        sustain, tone, volume, step_s, integration_scale=scale
     )
     dc_nodes, dc_q = operating_point(sustain, tone, volume, reduction.parameters)
     count = int(round(duration_s / step_s))
@@ -395,26 +399,61 @@ def simulate_complete(
     nonlinear_v[0] = dc_q
     capacitor_v = reduction.capacitor_incidence.T @ dc_nodes
     older_capacitor_v = capacitor_v.copy()
+    capacitor_current = np.zeros_like(capacitor_v)
     q_v = dc_q.copy()
+    integration_fallback_count = 0
     for index in range(1, count + 1):
+        used_euler_fallback = False
         previous_capacitor_v = capacitor_v
         if integration_method == "bdf2" and index > 1:
             history_v = (4.0 * previous_capacitor_v - older_capacitor_v) / 3.0
             step_reduction = reduction
+        elif integration_method in ("trapezoid", "trapezoid_adaptive"):
+            history_v = previous_capacitor_v + (
+                capacitor_current / reduction.capacitor_conductance
+            )
+            step_reduction = reduction
         else:
             history_v = previous_capacitor_v
             step_reduction = euler_reduction
-        node_v[index], capacitor_v, q_v, residual_v[index], correction_v[index] = _step(
+        candidate = _step(
             step_reduction, history_v, q_v, dc_q, float(input_v[index]),
             architecture, fully_converged, q1_local_corrections,
             fixed_corrections
         )
+        if integration_method == "trapezoid_adaptive" and (
+            not np.all(np.isfinite(candidate[0]))
+            or float(np.max(np.abs(candidate[0]))) > 12.0
+            or candidate[3] > 1e-7
+            or candidate[4] > 0.5
+        ):
+            candidate = _step(
+                euler_reduction, previous_capacitor_v, q_v.copy(), dc_q,
+                float(input_v[index]), architecture, fully_converged,
+                q1_local_corrections, fixed_corrections
+            )
+            integration_fallback_count += 1
+            used_euler_fallback = True
+        node_v[index], capacitor_v, q_v, residual_v[index], correction_v[index] = candidate
         older_capacitor_v = previous_capacitor_v
+        if integration_method in ("trapezoid", "trapezoid_adaptive"):
+            if used_euler_fallback:
+                capacitor_current = (
+                    euler_reduction.capacitor_conductance
+                    * (capacitor_v - previous_capacitor_v)
+                )
+            else:
+                capacitor_current = (
+                    reduction.capacitor_conductance
+                    * (capacitor_v - previous_capacitor_v)
+                    - capacitor_current
+                )
         nonlinear_v[index] = q_v
         if not np.all(np.isfinite(node_v[index])):
             raise FloatingPointError(f"Нечисловой результат на шаге {index}")
     return CompleteResult(
-        time_s, input_v, node_v, nonlinear_v, residual_v, correction_v
+        time_s, input_v, node_v, nonlinear_v, residual_v, correction_v,
+        integration_fallback_count=integration_fallback_count
     )
 
 

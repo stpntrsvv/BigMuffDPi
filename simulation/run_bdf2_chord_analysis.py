@@ -86,6 +86,7 @@ def main() -> int:
         ("Эйлер 1×", "euler", 1, "euler_1x"),
         ("BDF2 1×", "bdf2", 1, "bdf2_1x"),
         ("BDF2 2×", "bdf2", 2, "bdf2_2x"),
+        ("Трапеции 1×", "trapezoid", 1, "trapezoid_1x"),
         ("Эйлер 16×", "euler", 16, "euler_16x"),
     )
     outputs: dict[str, np.ndarray] = {}

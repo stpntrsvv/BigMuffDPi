@@ -68,6 +68,8 @@ def main() -> int:
                 "Эйлер 1×": run_tone(frequency_hz, level_v, 1, args.duration, "euler")[settle:],
                 "BDF2 1×": run_tone(frequency_hz, level_v, 1, args.duration, "bdf2")[settle:],
                 "BDF2 2×": run_tone(frequency_hz, level_v, 2, args.duration, "bdf2")[settle:],
+                "Трапеции 1×": run_tone(frequency_hz, level_v, 1, args.duration, "trapezoid")[settle:],
+                "Трапеции/Эйлер 1×": run_tone(frequency_hz, level_v, 1, args.duration, "trapezoid_adaptive")[settle:],
             }
             for label, candidate in candidates.items():
                 if not np.all(np.isfinite(candidate)) or np.max(np.abs(candidate)) > 20.0:
@@ -105,7 +107,8 @@ def main() -> int:
 
     report = f"""# Проверка BDF2
 
-Сравниваются однократный Эйлер, однократный и двукратный BDF2. Контроль — полная
+Сравниваются однократный Эйлер, однократный и двукратный BDF2, а также
+однократный метод трапеций. Контроль — полная
 модель с Эйлером при шестнадцатикратной частоте. Первый шаг BDF2 выполняется
 методом Эйлера, затем используются два прошлых напряжения каждого конденсатора.
 
@@ -116,6 +119,11 @@ def main() -> int:
 Чем отрицательнее последний столбец, тем ближе модуль спектра к контрольному
 расчёту. Это сравнение оценивает численный способ, но контрольный расчёт Эйлером
 16× сам по себе не является точным решением непрерывной схемы.
+
+Чистые трапеции дают высокую точность на слабом сигнале, но теряют устойчивость
+в части нелинейных режимов. Ранний повтор опасного шага методом Эйлера возвращает
+устойчивость лишь на части точек и обычно ухудшает точность относительно BDF2 1×.
+Поэтому смешанный вариант не является общим улучшением BDF2.
 """
     (EXPERIMENT / "report.md").write_text(report, encoding="utf-8")
     print(f"Отчёт: {EXPERIMENT / 'report.md'}")
