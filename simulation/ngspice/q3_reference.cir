@@ -1,0 +1,82 @@
+Big Muff Pi V3 isolated Q3 clipping stage
+
+* The semiconductor equations are written explicitly so the ngspice circuit
+* and the independent Python nodal solver evaluate the same physical model.
+
+.param VCC_VALUE=9
+.param R19_VALUE=10k
+.param R20_VALUE=100k
+.param R18_VALUE=10k
+.param R21_VALUE=150
+.param R17_VALUE=470k
+.param RLOAD_VALUE=110k
+.param C5_VALUE=100n
+.param C12_VALUE=470p
+.param C6_VALUE=1u
+.param C13_VALUE=100n
+
+.param TEMP_K=300.15
+.param VT_VALUE=25.8649m
+.param IS_DIODE=2n
+.param N_DIODE=1.9
+
+.param IS_FORWARD=10.025e-15
+.param IS_REVERSE=12e-15
+.param N_FORWARD=1
+.param N_REVERSE=1
+.param ALPHA_FORWARD=0.9975062344
+.param ALPHA_REVERSE=0.8333333333
+
+VCC vcc 0 {VCC_VALUE}
+VIN input 0 DC 0 AC 1 SIN(0 50m 1k)
+
+C5 input drive {C5_VALUE}
+R19 drive base {R19_VALUE}
+R20 base 0 {R20_VALUE}
+R18 vcc collector {R18_VALUE}
+R21 emitter 0 {R21_VALUE}
+R17 collector base {R17_VALUE}
+C12 collector base {C12_VALUE}
+C6 base diode_node {C6_VALUE}
+C13 collector output {C13_VALUE}
+RLOAD output 0 {RLOAD_VALUE}
+
+.func IFWD(x) {IS_FORWARD*(exp(x/(N_FORWARD*VT_VALUE))-1)}
+.func IREV(x) {IS_REVERSE*(exp(x/(N_REVERSE*VT_VALUE))-1)}
+.func IDPAIR(x) {2*IS_DIODE*sinh(x/(N_DIODE*VT_VALUE))}
+
+* Ebers-Moll terminal currents, positive from each terminal into the device.
+B_Q_BASE base 0 I={(1-ALPHA_FORWARD)*IFWD(v(base,emitter))+(1-ALPHA_REVERSE)*IREV(v(base,collector))}
+B_Q_COLLECTOR collector 0 I={ALPHA_FORWARD*IFWD(v(base,emitter))-IREV(v(base,collector))}
+B_Q_EMITTER emitter 0 I={-IFWD(v(base,emitter))+ALPHA_REVERSE*IREV(v(base,collector))}
+
+* Antiparallel diode pair between the C6 node and the collector.
+B_DIODE_PAIR diode_node collector I={IDPAIR(v(diode_node,collector))}
+
+* Numerically harmless DC paths prevent a singular initial linearization of
+* behavioral sources before ngspice has evaluated their derivatives.
+R_NUMERIC_BASE base 0 1T
+R_NUMERIC_COLLECTOR collector 0 1T
+R_NUMERIC_EMITTER emitter 0 1T
+R_NUMERIC_DIODE diode_node collector 1T
+
+.options temp=27 method=gear maxord=1 reltol=1e-8 abstol=1e-12 vntol=1e-10
+
+.control
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+
+op
+print v(drive) v(base) v(emitter) v(collector) v(diode_node) v(output) > ../raw/q3_reference/operating_point.txt
+
+ac dec 100 10 100k
+wrdata ../raw/q3_reference/ac.txt db(v(input)) db(v(collector)) db(v(output)) ph(v(output))
+
+tran 0.5u 10m 5m 0.5u
+wrdata ../raw/q3_reference/transient_ngspice.txt v(input) v(drive) v(base) v(collector) v(emitter) v(diode_node) v(output)
+
+quit
+.endc
+
+.end

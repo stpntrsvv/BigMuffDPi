@@ -1,0 +1,32 @@
+Big Muff Pi V3 reference analysis
+
+.param SUSTAIN=1.0
+.param TONE=0.5
+.param VOLUME=1.0
+
+VCC vcc 0 9
+VIN in 0 DC 0 AC 1 SIN(0 0.1 1k)
+
+.include models.lib
+.include big_muff_v3.inc
+
+.options temp=27
+
+.control
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+
+op
+print v(q4_b) v(q4_e) v(q4_c) v(q3_b) v(q3_e) v(q3_c) v(q2_b) v(q2_e) v(q2_c) v(q1_b) v(q1_e) v(q1_c) > ../raw/ngspice_reference/operating_point.txt
+
+ac dec 100 10 100k
+wrdata ../raw/ngspice_reference/ac.txt db(v(in)) db(v(q4_c)) db(v(q3_c)) db(v(q2_c)) db(v(tone_w)) db(v(out)) ph(v(out))
+
+tran 0.5u 30m 20m
+wrdata ../raw/ngspice_reference/transient.txt v(in) v(q4_c) v(q3_c) v(q2_c) v(tone_w) v(out)
+
+quit
+.endc
+
+.end

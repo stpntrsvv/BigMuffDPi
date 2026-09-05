@@ -1,0 +1,100 @@
+Big Muff Pi frontend with explicit equations matching muff_frontend_model.py
+
+.param SUSTAIN=0
+.param VCC_VALUE=9
+.param VT=25.8649m
+.param IF_S=10.025f IR_S=12f
+.param NF=1 NR=1 AF=0.9975062344 AR=0.8333333333
+.param DI_S=2n DN=1.9
+
+.func IFWD(x) {IF_S*(exp(x/(NF*VT))-1)}
+.func IREV(x) {IR_S*(exp(x/(NR*VT))-1)}
+.func IDPAIR(x) {2*DI_S*sinh(x/(DN*VT))}
+
+VCC vcc 0 {VCC_VALUE}
+VIN in 0 DC 0 AC 1
+
+R2 in c1_left 39k
+C1 c1_left q4_b 1u
+R14 q4_b 0 47k
+R13 vcc q4_c 10k
+R22 q4_e 0 100
+R9 q4_c q4_b 470k
+C10 q4_c q4_b 470p
+B_Q4_BASE q4_b 0 I={(1-AF)*IFWD(v(q4_b,q4_e))+(1-AR)*IREV(v(q4_b,q4_c))}
+B_Q4_COLLECTOR q4_c 0 I={AF*IFWD(v(q4_b,q4_e))-IREV(v(q4_b,q4_c))}
+B_Q4_EMITTER q4_e 0 I={-IFWD(v(q4_b,q4_e))+AR*IREV(v(q4_b,q4_c))}
+
+C4 q4_c sustain_top 1u
+R_SUSTAIN_TOP sustain_top sustain_w {max(1,100k*(1-SUSTAIN))}
+R_SUSTAIN_BOTTOM sustain_w sustain_bottom {max(1,100k*SUSTAIN)}
+R23 sustain_bottom 0 1k
+C5 sustain_w q3_drive 100n
+
+R19 q3_drive q3_b 10k
+R20 q3_b 0 100k
+R18 vcc q3_c 10k
+R21 q3_e 0 150
+R17 q3_c q3_b 470k
+C12 q3_c q3_b 470p
+B_Q3_BASE q3_b 0 I={(1-AF)*IFWD(v(q3_b,q3_e))+(1-AR)*IREV(v(q3_b,q3_c))}
+B_Q3_COLLECTOR q3_c 0 I={AF*IFWD(v(q3_b,q3_e))-IREV(v(q3_b,q3_c))}
+B_Q3_EMITTER q3_e 0 I={-IFWD(v(q3_b,q3_e))+AR*IREV(v(q3_b,q3_c))}
+C6 q3_b q3_diode 1u
+B_D3 q3_diode q3_c I={IDPAIR(v(q3_diode,q3_c))}
+
+C13 q3_c q2_drive 100n
+R12 q2_drive q2_b 10k
+R16 q2_b 0 100k
+R11 vcc q2_c 10k
+R10 q2_e 0 150
+R15 q2_c q2_b 470k
+C11 q2_c q2_b 470p
+B_Q2_BASE q2_b 0 I={(1-AF)*IFWD(v(q2_b,q2_e))+(1-AR)*IREV(v(q2_b,q2_c))}
+B_Q2_COLLECTOR q2_c 0 I={AF*IFWD(v(q2_b,q2_e))-IREV(v(q2_b,q2_c))}
+B_Q2_EMITTER q2_e 0 I={-IFWD(v(q2_b,q2_e))+AR*IREV(v(q2_b,q2_c))}
+C7 q2_b q2_diode 1u
+B_D2 q2_diode q2_c I={IDPAIR(v(q2_diode,q2_c))}
+
+C9 q2_c tone_high 4n
+R5 tone_high 0 22k
+R8 q2_c tone_low 39k
+C8 tone_low 0 10n
+R_TONE_LOAD tone_high tone_low 100k
+
+.options temp=27
+
+.control
+set noaskquit
+set wr_singlescale
+set wr_vecnames
+
+alterparam SUSTAIN=0
+reset
+ac dec 100 10 100k
+wrdata ../raw/frontend_global/ngspice_ac_0_00.txt db(v(q2_c)) ph(v(q2_c))
+
+alterparam SUSTAIN=0.25
+reset
+ac dec 100 10 100k
+wrdata ../raw/frontend_global/ngspice_ac_0_25.txt db(v(q2_c)) ph(v(q2_c))
+
+alterparam SUSTAIN=0.5
+reset
+ac dec 100 10 100k
+wrdata ../raw/frontend_global/ngspice_ac_0_50.txt db(v(q2_c)) ph(v(q2_c))
+
+alterparam SUSTAIN=0.75
+reset
+ac dec 100 10 100k
+wrdata ../raw/frontend_global/ngspice_ac_0_75.txt db(v(q2_c)) ph(v(q2_c))
+
+alterparam SUSTAIN=1
+reset
+ac dec 100 10 100k
+wrdata ../raw/frontend_global/ngspice_ac_1_00.txt db(v(q2_c)) ph(v(q2_c))
+
+quit
+.endc
+
+.end

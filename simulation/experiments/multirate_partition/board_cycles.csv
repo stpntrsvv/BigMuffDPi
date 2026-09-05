@@ -1,0 +1,3 @@
+variant,frontend_correction_cycles,q1_once_cycles,q1_twice_cycles,stream_average_cycles,stream_maximum_cycles
+cheap_3x3_plus_q2_scalar,837,391,666,3715,4521
+robust_4x4,917,391,677,3787,4593

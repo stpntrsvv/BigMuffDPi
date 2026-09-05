@@ -1,0 +1,41 @@
+* Provisional semiconductor models for the Big Muff Pi V3 reference circuit.
+* Topology and passive values come from the archived ElectroSmash schematic.
+* Semiconductor parameters must later be replaced by measured or sourced
+* BC239 and 1N914 models. Do not treat these parameters as final truth.
+
+.model D1N914 D(
++ IS=2.52n
++ N=1.752
++ RS=0.568
++ CJO=4p
++ M=0.4
++ VJ=0.75
++ TT=20n
++ BV=100
++ IBV=0.1u )
+
+.model BC239 NPN(
++ IS=1e-14
++ BF=400
++ NF=1.0
++ VAF=100
++ IKF=0.1
++ ISE=1e-13
++ NE=1.5
++ BR=5
++ NR=1.0
++ VAR=20
++ IKR=0.02
++ ISC=1e-13
++ NC=2.0
++ RB=100
++ RE=0.5
++ RC=1
++ CJE=12p
++ VJE=0.65
++ MJE=0.33
++ CJC=4p
++ VJC=0.5
++ MJC=0.33
++ TF=0.5n
++ TR=50n )
