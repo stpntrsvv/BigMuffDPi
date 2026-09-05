@@ -259,10 +259,24 @@ pio run -e fmac_benchmark -t upload
 - `simulation/experiments/composed_frontend_cycle_benchmark/report.md` — такты короткого и полного сигналов на STM32;
 - `simulation/experiments/composed_runtime_chord/report.md` — проверка полного аккорда и WAV для прослушивания;
 - `src/composed_chord_fixture.S` — встроенный полный тестовый аккорд;
-- `src/composed_block_benchmark.c` — блоковый deadline benchmark;
-- `src/composed_audio_runtime.c` — ADC/DMA/DAC runtime на регистрах.
+- `src/composed_frontend_benchmark.c` под `COMPOSED_BLOCK_BENCHMARK` — блоковый deadline benchmark;
+- `src/audio_io.c` — ADC/DMA/DAC runtime на регистрах.
 
-Последний predictor-вариант устойчив (`nonfinite=0`, `holds=0`), но при
-block=32 даёт 1827 deadline overruns на 6000 блоков. Следующая оптимизация —
-дешёвая начальная оценка Q2 через компактную LUT с максимум одной
-Newton-поправкой и редким bracketed fallback.
+Финальный аналитический Q2 и специализированный slow 2x2 путь устойчивы. На
+полном аккорде block=32 получено 0/6000 deadline overruns, максимум 107126
+тактов при бюджете 113312. Настоящий DMA runtime также дал 0 overruns.
+
+## Анализ необходимости oversampling
+
+- `simulation/run_oversampling_analysis.py` — полная модель на
+  1x/2x/4x/8x/16x, FIR-приведение к 48 кГц, THD, временная и спектральная
+  ошибка относительно 16x;
+- `simulation/experiments/oversampling_analysis/report.md` — таблица пилота;
+- `simulation/experiments/oversampling_analysis/figures/` — FFT выхода и
+  спектры ошибки.
+
+Дорогие результаты кэшируются в игнорируемой папке `cache/`. Быстрый запуск:
+
+```powershell
+..\.venv\Scripts\python.exe simulation\run_oversampling_analysis.py --quick
+```
