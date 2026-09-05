@@ -17,5 +17,6 @@ __pycache__/
 .ruff_cache/
 simulation/raw/
 simulation/experiments/oversampling_analysis/cache/
+simulation/experiments/*/cache/
 Thumbs.db
 .DS_Store
