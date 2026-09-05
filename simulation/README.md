@@ -280,3 +280,4 @@ pio run -e fmac_benchmark -t upload
 ```powershell
 ..\.venv\Scripts\python.exe simulation\run_oversampling_analysis.py --quick
 ```
+- `simulation/run_bdf2_analysis.py` — сравнение Эйлера и BDF2 в полной модели; отчёт и графики находятся в `simulation/experiments/bdf2_analysis/`.

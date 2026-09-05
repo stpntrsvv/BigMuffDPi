@@ -32,6 +32,7 @@ Q1_REVERSE = 10
 Q1_UNUSED = 11
 NONLINEAR_COUNT = 12
 Architecture = Literal["reference_full", "hybrid", "hybrid_q1_linear"]
+IntegrationMethod = Literal["euler", "bdf2"]
 InputFunction = Callable[[np.ndarray], np.ndarray]
 
 
@@ -154,6 +155,7 @@ def prepare_complete(
     volume: float,
     step_s: float | None,
     parameters: Q3Parameters | None = None,
+    integration_scale: float = 1.0,
 ) -> CompleteReduction:
     parameters = parameters or Q3Parameters()
     matrix, source, input_vector = _linear_system(parameters, sustain, tone, volume)
@@ -162,7 +164,7 @@ def prepare_complete(
     conductance = np.zeros_like(capacitance)
     influence = None
     if step_s is not None:
-        conductance = capacitance / step_s
+        conductance = integration_scale * capacitance / step_s
         matrix += (incidence * conductance[np.newaxis, :]) @ incidence.T
         influence = voltage @ np.linalg.solve(matrix, injection)
     return CompleteReduction(
@@ -371,9 +373,16 @@ def simulate_complete(
     fully_converged: bool = False,
     q1_local_corrections: int = 0,
     fixed_corrections: int = 1,
+    integration_method: IntegrationMethod = "euler",
 ) -> CompleteResult:
+    if integration_method not in ("euler", "bdf2"):
+        raise ValueError(f"Неизвестный способ интегрирования: {integration_method}")
     step_s = 1.0 / (48_000.0 * factor)
-    reduction = prepare_complete(sustain, tone, volume, step_s)
+    euler_reduction = prepare_complete(sustain, tone, volume, step_s)
+    reduction = (
+        euler_reduction if integration_method == "euler"
+        else prepare_complete(sustain, tone, volume, step_s, integration_scale=1.5)
+    )
     dc_nodes, dc_q = operating_point(sustain, tone, volume, reduction.parameters)
     count = int(round(duration_s / step_s))
     time_s = np.arange(count + 1) * step_s
@@ -385,13 +394,22 @@ def simulate_complete(
     node_v[0] = dc_nodes
     nonlinear_v[0] = dc_q
     capacitor_v = reduction.capacitor_incidence.T @ dc_nodes
+    older_capacitor_v = capacitor_v.copy()
     q_v = dc_q.copy()
     for index in range(1, count + 1):
+        previous_capacitor_v = capacitor_v
+        if integration_method == "bdf2" and index > 1:
+            history_v = (4.0 * previous_capacitor_v - older_capacitor_v) / 3.0
+            step_reduction = reduction
+        else:
+            history_v = previous_capacitor_v
+            step_reduction = euler_reduction
         node_v[index], capacitor_v, q_v, residual_v[index], correction_v[index] = _step(
-            reduction, capacitor_v, q_v, dc_q, float(input_v[index]),
+            step_reduction, history_v, q_v, dc_q, float(input_v[index]),
             architecture, fully_converged, q1_local_corrections,
             fixed_corrections
         )
+        older_capacitor_v = previous_capacitor_v
         nonlinear_v[index] = q_v
         if not np.all(np.isfinite(node_v[index])):
             raise FloatingPointError(f"Нечисловой результат на шаге {index}")
