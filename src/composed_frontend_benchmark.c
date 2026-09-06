@@ -5,7 +5,9 @@
 #else
 #include "stm32g4xx.h"
 #endif
-#ifdef COMPOSED_BDF2
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+#include "composed_frontend_fixture_alpha02.h"
+#elif defined(COMPOSED_BDF2)
 #include "composed_frontend_fixture_bdf2.h"
 #else
 #include "composed_frontend_fixture.h"
@@ -22,8 +24,8 @@
 #define DIS2 4.0e-9F
 typedef union { float f; uint32_t u; } bits_t;
 typedef struct { float as[7], as_old[7], aq[3], bs[2], bs_old[2], bq, base, base_old, output;
- float av[3],ac[3],bv,bc,b_linear,b_linear_min,b_linear_max,ss[4],sq[2],sv[2],sc[2],last_port;
-#ifdef COMPOSED_BDF2
+ float av[3],ac[3],bv,bc,b_linear,b_linear_min,b_linear_max,ss[4],sq[2],sv[2],sc[2],last_port,previous_input;
+#if defined(COMPOSED_BDF2) || defined(COMPOSED_GENERALIZED_ALPHA02)
  float ss_old[4];
 #endif
  uint32_t index,fallbacks,adaptive,slow_adaptive,q2_bracketed,holds,fault; } state_t;
@@ -46,10 +48,19 @@ static void refresh_one(state_t*s,uint32_t which){switch(which){case 0:sinhcosh(
 static void solve3(float m[3][3],float r[3],float x[3]){float a=m[0][0],b=m[0][1],c=m[0][2],d=m[1][0],e=m[1][1],f=m[1][2],g=m[2][0],h=m[2][1],i=m[2][2];float c0=e*i-f*h,c1=f*g-d*i,c2=d*h-e*g,z=1/(a*c0+b*c1+c*c2);x[0]=z*(c0*r[0]+(c*h-b*i)*r[1]+(b*f-c*e)*r[2]);x[1]=z*(c1*r[0]+(a*i-c*g)*r[1]+(c*d-a*f)*r[2]);x[2]=z*(c2*r[0]+(b*g-a*h)*r[1]+(a*e-b*d)*r[2]);}
 static float dot(const float*a,const float*b,uint32_t n){float v=0;for(uint32_t k=0;k<n;k++)v+=a[k]*b[k];return v;}
 static void history(const float*state,const float*older,float*out,uint32_t n){
-#ifdef COMPOSED_BDF2
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+ for(uint32_t k=0;k<n;k++)out[k]=state[k]+(5.0F/21.0F)*older[k];
+#elif defined(COMPOSED_BDF2)
  for(uint32_t k=0;k<n;k++)out[k]=(4.0F*state[k]-older[k])*(1.0F/3.0F);
 #else
  (void)older;for(uint32_t k=0;k<n;k++)out[k]=state[k];
+#endif
+}
+static void accept_state(float*state,float*history_state,const float*stage,uint32_t n){
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+ for(uint32_t k=0;k<n;k++){float delta=1.2F*(stage[k]-state[k]);state[k]+=delta;history_state[k]=1.2F*delta-.2F*history_state[k];}
+#else
+ for(uint32_t k=0;k<n;k++){history_state[k]=state[k];state[k]=stage[k];}
 #endif
 }
 static float q2_analytic_predictor(float linear_q){
@@ -64,7 +75,7 @@ static float q2_analytic_predictor(float linear_q){
 static void slow_stage(state_t*s,float port){
  s->last_port=port;
  float hs[4];history(s->ss,
-#ifdef COMPOSED_BDF2
+#if defined(COMPOSED_BDF2) || defined(COMPOSED_GENERALIZED_ALPHA02)
  s->ss_old,
 #else
  s->ss,
@@ -89,11 +100,17 @@ static void slow_stage(state_t*s,float port){
  if(!safe){s->sq[0]=saved_sq[0];s->sq[1]=saved_sq[1];s->sv[0]=saved_sv[0];s->sv[1]=saved_sv[1];s->sc[0]=saved_sc[0];s->sc[1]=saved_sc[1];for(uint32_t j=0;j<4;j++)s->ss[j]=saved_ss[j];s->output=saved_output;s->holds++;return;}
  cached_exp_sat(s->sv[0],s->sc[0],IS,&cur[0],&der[0]);cached_exp_sat(s->sv[1],s->sc[1],12.0e-15F,&cur[1],&der[1]);
  float next[4];for(uint32_t j=0;j<4;j++)next[j]=composed_slow_state_bias[j]+composed_slow_state_port[j]*port+dot(composed_slow_state_transition[j],hs,4)-dot(composed_slow_state_active[j],cur,2);
- s->output=composed_slow_output_bias[0]+composed_slow_output_port[0]*port+dot(composed_slow_output_state,hs,4)-dot(composed_slow_output_active,cur,2);for(uint32_t j=0;j<4;j++){
-#ifdef COMPOSED_BDF2
-  s->ss_old[j]=s->ss[j];
+ float stage_output=composed_slow_output_bias[0]+composed_slow_output_port[0]*port+dot(composed_slow_output_state,hs,4)-dot(composed_slow_output_active,cur,2);
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+ s->output+=1.2F*(stage_output-s->output);
+#else
+ s->output=stage_output;
 #endif
-  s->ss[j]=next[j];}
+#if defined(COMPOSED_BDF2) || defined(COMPOSED_GENERALIZED_ALPHA02)
+ accept_state(s->ss,s->ss_old,next,4);
+#else
+ for(uint32_t j=0;j<4;j++)s->ss[j]=next[j];
+#endif
 }
 static void solve_q2(state_t*s,float linear_q,float*current,float*derivative){
  const float influence=composed_b_influence[0][0];
@@ -119,36 +136,63 @@ static void solve_q2(state_t*s,float linear_q,float*current,float*derivative){
 __attribute__((noinline)) static void step(state_t*s,float input){
  uint32_t fallback_before=s->fallbacks;
  float ah[7],bh[2];history(s->as,s->as_old,ah,7);history(s->bs,s->bs_old,bh,2);
- float predicted=2*s->base-s->base_old,lq[3],cur[3],der[3],m[3][3],r[3],dx[3];
- for(uint32_t j=0;j<3;j++)lq[j]=composed_a_q_bias[j]+composed_a_q_input[j]*input+composed_a_q_boundary[j]*predicted+dot(composed_a_q_state[j],ah,7);
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+ float stage_input=s->previous_input+(5.0F/6.0F)*(input-s->previous_input);
+ float predicted=s->base+(5.0F/6.0F)*(s->base-s->base_old);
+#else
+ float stage_input=input,predicted=2*s->base-s->base_old;
+#endif
+ float lq[3],cur[3],der[3],m[3][3],r[3],dx[3];
+ for(uint32_t j=0;j<3;j++)lq[j]=composed_a_q_bias[j]+composed_a_q_input[j]*stage_input+composed_a_q_boundary[j]*predicted+dot(composed_a_q_state[j],ah,7);
  cached_exp(s->av[0],s->ac[0],&cur[0],&der[0]);cached_exp(s->av[1],s->ac[1],&cur[1],&der[1]);cached_diode(s->av[2],s->ac[2],&cur[2],&der[2]);
  for(uint32_t j=0;j<3;j++){r[j]=s->aq[j]-lq[j];for(uint32_t k=0;k<3;k++){r[j]+=composed_a_influence[j][k]*cur[k];m[j][k]=(j==k)+composed_a_influence[j][k]*der[k];}}solve3(m,r,dx);
  float olda[3]={s->aq[0],s->aq[1],s->aq[2]};for(uint32_t j=0;j<3;j++)s->aq[j]-=dx[j];
  update_cache(olda[0],s->aq[0],FS,&s->av[0],&s->ac[0],&s->fallbacks);update_cache(olda[1],s->aq[1],FS,&s->av[1],&s->ac[1],&s->fallbacks);update_cache(olda[2],s->aq[2],DS,&s->av[2],&s->ac[2],&s->fallbacks);
  cached_exp(s->av[0],s->ac[0],&cur[0],&der[0]);cached_exp(s->av[1],s->ac[1],&cur[1],&der[1]);cached_diode(s->av[2],s->ac[2],&cur[2],&der[2]);
- float drive=composed_a_drive_bias[0]+composed_a_drive_input[0]*input+composed_a_drive_boundary[0]*predicted+dot(composed_a_drive_state,ah,7)-dot(composed_a_drive_active,cur,3),nexta[7];
+ float drive=composed_a_drive_bias[0]+composed_a_drive_input[0]*stage_input+composed_a_drive_boundary[0]*predicted+dot(composed_a_drive_state,ah,7)-dot(composed_a_drive_active,cur,3),nexta[7];
  if((((bits_t){.f=drive}.u>>23)&255U)==255U)s->fault=1U;
- for(uint32_t j=0;j<7;j++)nexta[j]=composed_a_state_bias[j]+composed_a_state_input[j]*input+composed_a_state_boundary[j]*predicted+dot(composed_a_state_transition[j],ah,7)-dot(composed_a_state_active[j],cur,3);
+ for(uint32_t j=0;j<7;j++)nexta[j]=composed_a_state_bias[j]+composed_a_state_input[j]*stage_input+composed_a_state_boundary[j]*predicted+dot(composed_a_state_transition[j],ah,7)-dot(composed_a_state_active[j],cur,3);
  float lqb=composed_b_q_bias[0]+composed_b_q_input[0]*drive+composed_b_q_port[0]*composed_port[0]+dot(composed_b_q_state[0],bh,2),ci,cd;
  solve_q2(s,lqb,&ci,&cd);
  float base=composed_b_base_bias[0]+composed_b_base_input[0]*drive+composed_b_base_port[0]*composed_port[0]+dot(composed_b_base_state,bh,2)-composed_b_base_active[0]*ci;
  float collector=composed_b_collector_bias[0]+composed_b_collector_input[0]*drive+composed_b_collector_port[0]*composed_port[0]+dot(composed_b_collector_state,bh,2)-composed_b_collector_active[0]*ci;
  if(((((bits_t){.f=base}.u>>23)&255U)==255U)||((((bits_t){.f=collector}.u>>23)&255U)==255U))s->fault=2U;
  float nextb[2];for(uint32_t j=0;j<2;j++)nextb[j]=composed_b_state_bias[j]+composed_b_state_input[j]*drive+composed_b_state_port[j]*composed_port[0]+dot(composed_b_state_transition[j],bh,2)-composed_b_state_active[j][0]*ci;
- for(uint32_t j=0;j<7;j++){s->as_old[j]=s->as[j];s->as[j]=nexta[j];}
- for(uint32_t j=0;j<2;j++){s->bs_old[j]=s->bs[j];s->bs[j]=nextb[j];}
- s->base_old=s->base;s->base=base;slow_stage(s,collector);if((((bits_t){.f=s->output}.u>>23)&255U)==255U)s->fault=3U;s->index++;
+ accept_state(s->as,s->as_old,nexta,7);accept_state(s->bs,s->bs_old,nextb,2);
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+ float next_base=s->base+1.2F*(base-s->base);s->base_old=s->base;s->base=next_base;
+ slow_stage(s,collector);s->previous_input=input;
+#else
+ s->base_old=s->base;s->base=base;slow_stage(s,collector);
+#endif
+ if((((bits_t){.f=s->output}.u>>23)&255U)==255U)s->fault=3U;s->index++;
 #ifdef COMPOSED_PEDAL_HOST_FULL_REFRESH
  if((s->index&15U)==0U)refresh(s);
 #else
  if((s->index&15U)==0U&&s->fallbacks==fallback_before)refresh_one(s,(s->index>>4U)%5U);
 #endif
 }
-static void reset(state_t*s){for(uint32_t j=0;j<7;j++)s->as_old[j]=s->as[j]=composed_a_dc_state[j];for(uint32_t j=0;j<3;j++)s->aq[j]=composed_a_dc_q[j];for(uint32_t j=0;j<2;j++)s->bs_old[j]=s->bs[j]=composed_b_dc_state[j];s->bq=composed_b_dc_q[0];s->b_linear=0;s->b_linear_min=0;s->b_linear_max=0;for(uint32_t j=0;j<4;j++){
-#ifdef COMPOSED_BDF2
+static void reset(state_t*s){for(uint32_t j=0;j<7;j++){s->as[j]=composed_a_dc_state[j];s->as_old[j]=
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+0.0F;
+#else
+composed_a_dc_state[j];
+#endif
+}for(uint32_t j=0;j<3;j++)s->aq[j]=composed_a_dc_q[j];for(uint32_t j=0;j<2;j++){s->bs[j]=composed_b_dc_state[j];s->bs_old[j]=
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+0.0F;
+#else
+composed_b_dc_state[j];
+#endif
+}s->bq=composed_b_dc_q[0];s->b_linear=0;s->b_linear_min=0;s->b_linear_max=0;for(uint32_t j=0;j<4;j++){
+#if defined(COMPOSED_BDF2) || defined(COMPOSED_GENERALIZED_ALPHA02)
+#ifdef COMPOSED_GENERALIZED_ALPHA02
+ s->ss_old[j]=0.0F;
+#else
  s->ss_old[j]=composed_slow_dc_state[j];
 #endif
- s->ss[j]=composed_slow_dc_state[j];}for(uint32_t j=0;j<2;j++)s->sq[j]=composed_slow_dc_q[j];s->base=s->base_old=.695552931F;s->output=0;s->index=0;s->fallbacks=0;s->adaptive=0;s->slow_adaptive=0;s->q2_bracketed=0;s->holds=0;s->fault=0;refresh(s);}
+#endif
+ s->ss[j]=composed_slow_dc_state[j];}for(uint32_t j=0;j<2;j++)s->sq[j]=composed_slow_dc_q[j];s->base=s->base_old=.695552931F;s->output=0;s->last_port=0;s->previous_input=0;s->index=0;s->fallbacks=0;s->adaptive=0;s->slow_adaptive=0;s->q2_bracketed=0;s->holds=0;s->fault=0;refresh(s);}
 
 #if defined(COMPOSED_PEDAL_RUNTIME) || defined(COMPOSED_PEDAL_HOST)
 static state_t runtime_state;

@@ -68,14 +68,20 @@ def emit(prefix, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bdf2", action="store_true")
+    parser.add_argument("--alpha02", action="store_true")
     args = parser.parse_args()
+    if args.bdf2 and args.alpha02:
+        parser.error("Выберите только один способ интегрирования")
     output = ROOT / "include" / (
-        "composed_frontend_fixture_bdf2.h" if args.bdf2
+        "composed_frontend_fixture_alpha02.h" if args.alpha02
+        else "composed_frontend_fixture_bdf2.h" if args.bdf2
         else "composed_frontend_fixture.h"
     )
     # Проводимость BDF2 равна 3C/(2h), то есть коэффициенты совпадают
     # с коэффициентами Эйлера при условной частоте 3Fs/2.
-    coefficient_rate = 72_000 if args.bdf2 else 48_000
+    # Для rho=0,2: alpha_m=7/6, alpha_f=gamma=5/6,
+    # alpha_m/(gamma*alpha_f)=42/25=1,68.
+    coefficient_rate = 80_640 if args.alpha02 else 72_000 if args.bdf2 else 48_000
     p = Q3Parameters()
     nodes, dc_q = operating_point(1.0, 1.0, 0.8, p)
     slow_reduction, slow = slow_affine(p, 1.0, 0.8, slow_rate=coefficient_rate)
@@ -123,7 +129,11 @@ def main():
         b[name + "_state"] = b["node_state"][[index]][:]
         b[name + "_active"] = b["node_active"][[index]][:]
 
-    guard = "COMPOSED_FRONTEND_FIXTURE_BDF2_H" if args.bdf2 else "COMPOSED_FRONTEND_FIXTURE_H"
+    guard = (
+        "COMPOSED_FRONTEND_FIXTURE_ALPHA02_H" if args.alpha02
+        else "COMPOSED_FRONTEND_FIXTURE_BDF2_H" if args.bdf2
+        else "COMPOSED_FRONTEND_FIXTURE_H"
+    )
     parts = [f"#ifndef {guard}\n#define {guard}\n",
              "#define COMPOSED_STREAM_COUNT 256U\n", emit("composed_a_", a)]
     for name in ("q_boundary", "state_boundary", "drive_bias", "drive_input",
