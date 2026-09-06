@@ -457,6 +457,77 @@ def simulate_complete(
     )
 
 
+def simulate_complete_generalized_alpha(
+    sustain: float,
+    tone: float,
+    volume: float,
+    factor: int,
+    input_function: InputFunction,
+    rho_infinity: float,
+    duration_s: float = 12e-3,
+    architecture: Architecture = "hybrid",
+    fully_converged: bool = False,
+) -> CompleteResult:
+    """Обобщённый α-метод второго порядка для системы первого порядка."""
+    if not 0.0 <= rho_infinity <= 1.0:
+        raise ValueError("rho_infinity должен находиться в диапазоне 0…1")
+    step_s = 1.0 / (48_000.0 * factor)
+    alpha_m = 0.5 * (3.0 - rho_infinity) / (1.0 + rho_infinity)
+    alpha_f = 1.0 / (1.0 + rho_infinity)
+    gamma = 0.5 + alpha_m - alpha_f
+    conductance_scale = alpha_m / (gamma * alpha_f)
+    reduction = prepare_complete(
+        sustain, tone, volume, step_s,
+        integration_scale=conductance_scale,
+    )
+    dc_nodes, dc_q = operating_point(sustain, tone, volume, reduction.parameters)
+    count = int(round(duration_s / step_s))
+    time_s = np.arange(count + 1) * step_s
+    input_v = np.asarray(input_function(time_s), dtype=np.float64)
+    node_v = np.empty((count + 1, NODE_COUNT))
+    nonlinear_v = np.empty((count + 1, NONLINEAR_COUNT))
+    residual_v = np.zeros(count + 1)
+    correction_v = np.zeros(count + 1)
+    node_v[0] = dc_nodes
+    nonlinear_v[0] = dc_q
+    capacitor_v = reduction.capacitor_incidence.T @ dc_nodes
+    capacitor_derivative = np.zeros_like(capacitor_v)
+    q_v = dc_q.copy()
+    derivative_history_scale = (
+        alpha_f * step_s * (alpha_m - gamma) / alpha_m
+    )
+    for index in range(1, count + 1):
+        previous_nodes = node_v[index - 1]
+        previous_caps = capacitor_v
+        previous_q = q_v
+        history_v = previous_caps + derivative_history_scale * capacitor_derivative
+        stage_input = (
+            (1.0 - alpha_f) * input_v[index - 1]
+            + alpha_f * input_v[index]
+        )
+        stage_nodes, stage_caps, stage_q, residual, correction = _step(
+            reduction, history_v, previous_q.copy(), dc_q, float(stage_input),
+            architecture, fully_converged,
+        )
+        node_v[index] = previous_nodes + (stage_nodes - previous_nodes) / alpha_f
+        capacitor_v = previous_caps + (stage_caps - previous_caps) / alpha_f
+        q_v = previous_q + (stage_q - previous_q) / alpha_f
+        capacitor_derivative = (
+            (capacitor_v - previous_caps) / step_s
+            - (1.0 - gamma) * capacitor_derivative
+        ) / gamma
+        nonlinear_v[index] = q_v
+        residual_v[index] = residual
+        correction_v[index] = correction
+        if not np.all(np.isfinite(node_v[index])):
+            raise FloatingPointError(
+                f"Нечисловой результат обобщённого α-метода на шаге {index}"
+            )
+    return CompleteResult(
+        time_s, input_v, node_v, nonlinear_v, residual_v, correction_v
+    )
+
+
 def simulate_complete_adaptive_q1(
     sustain: float,
     tone: float,

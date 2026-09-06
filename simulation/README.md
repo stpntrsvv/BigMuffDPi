@@ -283,3 +283,4 @@ pio run -e fmac_benchmark -t upload
 - `simulation/run_bdf2_analysis.py` — сравнение Эйлера и BDF2 в полной модели; отчёт и графики находятся в `simulation/experiments/bdf2_analysis/`.
 - `simulation/run_bdf2_chord_analysis.py` — сравнение Эйлера и BDF2 на атаке настоящего гитарного аккорда со звуковыми файлами для прослушивания.
 - `simulation/experiments/bdf2_stm32/report.md` — перенос BDF2 1× в составное ядро и замеры на STM32G474.
+- `simulation/run_generalized_alpha_analysis.py` — перебор управляемого высокочастотного затухания обобщённого α-метода; лучший модельный компромисс найден около `rho=0.2`.
