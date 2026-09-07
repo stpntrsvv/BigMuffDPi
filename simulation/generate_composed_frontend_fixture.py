@@ -69,10 +69,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bdf2", action="store_true")
     parser.add_argument("--alpha02", action="store_true")
+    parser.add_argument("--sustain", type=float, default=1.0)
+    parser.add_argument("--tone", type=float, default=1.0)
+    parser.add_argument("--volume", type=float, default=0.8)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.bdf2 and args.alpha02:
         parser.error("Выберите только один способ интегрирования")
-    output = ROOT / "include" / (
+    output = args.output or ROOT / "include" / (
         "composed_frontend_fixture_alpha02.h" if args.alpha02
         else "composed_frontend_fixture_bdf2.h" if args.bdf2
         else "composed_frontend_fixture.h"
@@ -82,16 +86,20 @@ def main():
     # Для rho=0,2: alpha_m=7/6, alpha_f=gamma=5/6,
     # alpha_m/(gamma*alpha_f)=42/25=1,68.
     coefficient_rate = 80_640 if args.alpha02 else 72_000 if args.bdf2 else 48_000
+    for name in ("sustain", "tone", "volume"):
+        if not 0.0 <= getattr(args, name) <= 1.0:
+            parser.error(f"--{name} должен быть в диапазоне 0...1")
+    sustain, tone, volume = args.sustain, args.tone, args.volume
     p = Q3Parameters()
-    nodes, dc_q = operating_point(1.0, 1.0, 0.8, p)
-    slow_reduction, slow = slow_affine(p, 1.0, 0.8, slow_rate=coefficient_rate)
+    nodes, dc_q = operating_point(sustain, tone, volume, p)
+    slow_reduction, slow = slow_affine(p, tone, volume, slow_rate=coefficient_rate)
     slow_dc_state = slow_reduction.incidence.T @ np.concatenate(
         ([nodes[Q2_COLLECTOR]], nodes[SLOW_NODES]))
     _, _, _, _, port_i, port_g = slow_step(
         slow_reduction, slow_dc_state, dc_q[Q1_NONLINEAR],
         float(nodes[Q2_COLLECTOR]), True)
     port_offset = port_i - port_g * float(nodes[Q2_COLLECTOR])
-    first, second = prepare_blocks(p, 1.0, 1.0 / coefficient_rate, port_g, dc_q)
+    first, second = prepare_blocks(p, sustain, 1.0 / coefficient_rate, port_g, dc_q)
     dc_current, dc_first = nonlinear_terms(dc_q[:9], p, "hybrid", dc_q[:9])
 
     # Fold both reverse leakage currents into the first affine source.
@@ -157,6 +165,7 @@ def main():
               c_array_1d("composed_port", np.array([port_offset, port_g])),
               "#endif\n"]
     text = "\n".join(parts)
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(text, encoding="utf-8")
     print(output)
 

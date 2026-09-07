@@ -8,9 +8,9 @@ static audio_engine_controls_t s_controls;
 
 void audio_engine_init(void)
 {
-    s_controls.sustain = 1.0F;
-    s_controls.tone = 1.0F;
-    s_controls.volume = 0.8F;
+    s_controls.sustain = 0.60F;
+    s_controls.tone = 0.45F;
+    s_controls.volume = 0.50F;
 #ifdef COMPOSED_PEDAL_RUNTIME
     composed_pedal_init();
 #endif

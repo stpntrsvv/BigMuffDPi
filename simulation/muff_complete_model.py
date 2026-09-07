@@ -32,7 +32,7 @@ Q1_REVERSE = 10
 Q1_UNUSED = 11
 NONLINEAR_COUNT = 12
 Architecture = Literal["reference_full", "hybrid", "hybrid_q1_linear"]
-IntegrationMethod = Literal["euler", "bdf2", "trapezoid", "trapezoid_adaptive"]
+IntegrationMethod = Literal["euler", "bdf2", "trapezoid", "trapezoid_adaptive", "tr_bdf2"]
 InputFunction = Callable[[np.ndarray], np.ndarray]
 
 
@@ -376,13 +376,15 @@ def simulate_complete(
     fixed_corrections: int = 1,
     integration_method: IntegrationMethod = "euler",
 ) -> CompleteResult:
-    if integration_method not in ("euler", "bdf2", "trapezoid", "trapezoid_adaptive"):
+    if integration_method not in ("euler", "bdf2", "trapezoid", "trapezoid_adaptive", "tr_bdf2"):
         raise ValueError(f"Неизвестный способ интегрирования: {integration_method}")
     step_s = 1.0 / (48_000.0 * factor)
     euler_reduction = prepare_complete(sustain, tone, volume, step_s)
+    tr_gamma = 2.0 - np.sqrt(2.0)
     scale = {
         "euler": 1.0, "bdf2": 1.5,
         "trapezoid": 2.0, "trapezoid_adaptive": 2.0,
+        "tr_bdf2": 2.0 / tr_gamma,
     }[integration_method]
     reduction = prepare_complete(
         sustain, tone, volume, step_s, integration_scale=scale
@@ -405,7 +407,42 @@ def simulate_complete(
     for index in range(1, count + 1):
         used_euler_fallback = False
         previous_capacitor_v = capacitor_v
-        if integration_method == "bdf2" and index > 1:
+        if integration_method == "tr_bdf2":
+            # Первая ступень: трапеции на t_n + gamma*h. При gamma=2-sqrt(2)
+            # обе ступени имеют одну и ту же матрицу проводимостей.
+            first_history = previous_capacitor_v + (
+                capacitor_current / reduction.capacitor_conductance
+            )
+            stage_input = input_v[index - 1] + tr_gamma * (
+                input_v[index] - input_v[index - 1]
+            )
+            stage = _step(
+                reduction, first_history, q_v, dc_q, float(stage_input),
+                architecture, fully_converged, q1_local_corrections,
+                fixed_corrections
+            )
+            _, stage_capacitor_v, stage_q, stage_residual, stage_correction = stage
+            # Вторая ступень: BDF2 на неравномерной сетке (0, gamma, 1).
+            # При выбранном gamma её проводимость совпадает с первой ступенью.
+            a0 = (2.0 - tr_gamma) / (1.0 - tr_gamma)
+            a1 = -1.0 / (tr_gamma * (1.0 - tr_gamma))
+            a2 = (1.0 - tr_gamma) / tr_gamma
+            second_history = -(a1 * stage_capacitor_v + a2 * previous_capacitor_v) / a0
+            candidate = _step(
+                reduction, second_history, stage_q, dc_q, float(input_v[index]),
+                architecture, fully_converged, q1_local_corrections,
+                fixed_corrections
+            )
+            candidate = (
+                candidate[0], candidate[1], candidate[2],
+                max(candidate[3], stage_residual),
+                max(candidate[4], stage_correction),
+            )
+            capacitor_current = (
+                reduction.capacitor_conductance
+                * (candidate[1] - second_history)
+            )
+        elif integration_method == "bdf2" and index > 1:
             history_v = (4.0 * previous_capacitor_v - older_capacitor_v) / 3.0
             step_reduction = reduction
         elif integration_method in ("trapezoid", "trapezoid_adaptive"):
@@ -416,11 +453,12 @@ def simulate_complete(
         else:
             history_v = previous_capacitor_v
             step_reduction = euler_reduction
-        candidate = _step(
-            step_reduction, history_v, q_v, dc_q, float(input_v[index]),
-            architecture, fully_converged, q1_local_corrections,
-            fixed_corrections
-        )
+        if integration_method != "tr_bdf2":
+            candidate = _step(
+                step_reduction, history_v, q_v, dc_q, float(input_v[index]),
+                architecture, fully_converged, q1_local_corrections,
+                fixed_corrections
+            )
         if integration_method == "trapezoid_adaptive" and (
             not np.all(np.isfinite(candidate[0]))
             or float(np.max(np.abs(candidate[0]))) > 12.0

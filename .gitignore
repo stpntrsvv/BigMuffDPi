@@ -18,5 +18,8 @@ __pycache__/
 simulation/raw/
 simulation/experiments/oversampling_analysis/cache/
 simulation/experiments/*/cache/
+simulation/experiments/song_offline/output/
+simulation/experiments/song_offline/output_*/
+simulation/experiments/song_offline/input/
 Thumbs.db
 .DS_Store
